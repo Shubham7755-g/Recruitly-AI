@@ -279,7 +279,7 @@ export const Candidates: React.FC<CandidatesProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredCandidates.map((cand) => {
+                filteredCandidates.map((cand, index) => {
                   const isSelected = selectedForCompare.includes(cand.candidate_id);
                   return (
                     <tr 
@@ -301,12 +301,12 @@ export const Candidates: React.FC<CandidatesProps> = ({
                       {/* Rank Badge */}
                       <td className="px-4 py-3.5">
                         <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
-                          cand.rank === 1 ? 'bg-[#C5A059]/20 text-[#E5C07B] border border-[#C5A059]/50 ring-1 ring-[#C5A059]/50' :
-                          cand.rank === 2 ? 'bg-zinc-800 text-zinc-200 ring-1 ring-zinc-700' :
-                          cand.rank === 3 ? 'bg-zinc-800/80 text-zinc-300' :
+                          index === 0 ? 'bg-[#C5A059]/20 text-[#E5C07B] border border-[#C5A059]/50 ring-1 ring-[#C5A059]/50' :
+                          index === 1 ? 'bg-zinc-800 text-zinc-200 ring-1 ring-zinc-700' :
+                          index === 2 ? 'bg-zinc-800/80 text-zinc-300' :
                           'bg-zinc-900 text-zinc-500 border border-zinc-800'
                         }`}>
-                          #{cand.rank}
+                          #{index + 1}
                         </span>
                       </td>
 
@@ -440,7 +440,7 @@ export const Candidates: React.FC<CandidatesProps> = ({
                 <div key={c.candidate_id} className="rounded-xl border border-zinc-800 bg-[#0C0C0C] p-4 space-y-4">
                   <div className="text-center pb-3 border-b border-zinc-800">
                     <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-[#C5A059]/20 text-[#E5C07B] border border-[#C5A059]/40 mb-1">
-                      Rank #{c.rank}
+                      Rank #{filteredCandidates.findIndex(candidate => candidate.candidate_id === c.candidate_id) + 1}
                     </span>
                     <h3 className="font-bold text-base text-zinc-100">{c.candidate_name}</h3>
                     <div className={`mt-2 text-2xl font-extrabold ${c.match_score >= 80 ? 'text-emerald-400' : 'text-zinc-200'}`}>
