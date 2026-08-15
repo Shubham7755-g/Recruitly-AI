@@ -1,0 +1,6 @@
+{
+  "name": "Recruitly AI",
+  "description": "AI-Based Resume Screening & Candidate Ranking Tool for recruiters with ML-driven explainable scoring, skill-gap analysis, and AI candidate summaries.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
