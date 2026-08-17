@@ -23,27 +23,60 @@ export async function extractTextFromFile(file: File): Promise<string> {
       return await file.text();
     }
   } else if (fileExt === 'pdf') {
+    const arrayBuffer = await file.arrayBuffer();
+
     try {
-      // Dynamic import of pdfjs-dist for browser compatibility
+      // Use the worker bundled with pdfjs-dist instead of a CDN URL.
+      // The previous CDN URL pointed at a non-existent worker for
+      // pdfjs-dist 6.x, which caused extraction to fail and the code
+      // to incorrectly send raw PDF bytes to FastAPI as text.
       const pdfjs = await import('pdfjs-dist');
-      // Use standard worker CDN or fallback
-      pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version || '3.11.174'}/pdf.worker.min.js`;
-      
-      const arrayBuffer = await file.arrayBuffer();
-      const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-      const pdf = await loadingTask.promise;
-      let fullText = '';
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.min.mjs',
+        import.meta.url
+      ).toString();
+
+      let pdf;
+
+      try {
+        pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+      } catch (workerError) {
+        // Safe fallback for environments where Vite cannot load the
+        // bundled worker. This keeps extraction local and avoids the
+        // broken CDN/fake-worker path.
+        console.warn('PDF worker failed; retrying without worker:', workerError);
+        pdf = await pdfjs.getDocument({
+          data: arrayBuffer,
+          disableWorker: true,
+        }).promise;
+      }
+
+      const pages: string[] = [];
 
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items.map((item: any) => item.str).join(' ');
-        fullText += pageText + '\n';
+        const pageText = textContent.items
+          .map((item: any) => item?.str || '')
+          .join(' ');
+        pages.push(pageText);
       }
-      return fullText.trim() || await file.text();
+
+      const fullText = pages.join('\n').trim();
+
+      if (!fullText) {
+        throw new Error(
+          `No selectable text found in ${file.name}. The PDF may be image-only.`
+        );
+      }
+
+      return fullText;
     } catch (err) {
-      console.warn('PDF text extraction error, falling back to text read:', err);
-      return await file.text();
+      // Never call file.text() for a PDF. A PDF is binary data, so
+      // decoding it as UTF-8 produces garbage and breaks candidate
+      // extraction downstream.
+      console.error(`PDF text extraction failed for ${file.name}:`, err);
+      throw new Error(`Could not extract text from ${file.name}. Please use a text-based PDF.`);
     }
   } else {
     // Plain text or markdown
@@ -149,41 +182,81 @@ export const api = {
 
   // Get candidate by ID
   async getCandidateById(candidateId: string): Promise<Candidate | null> {
+    // First use the candidates produced by the latest resume analysis.
+    // This prevents old/mock backend data from replacing the real uploaded resume.
+    const candidates = getSavedCandidates();
+
+    const localCandidate = candidates.find(
+      c => c.candidate_id === candidateId
+    );
+
+    if (localCandidate) {
+      return localCandidate;
+    }
+
+    // Only ask the backend if the candidate isn't available locally.
     try {
       const res = await fetch(`/api/candidates/${candidateId}`);
+
       if (res.ok) {
         return await res.json();
       }
     } catch {
-      // fallback
+      // Ignore backend failure and return null below.
     }
-    const candidates = getSavedCandidates();
-    return candidates.find(c => c.candidate_id === candidateId) || null;
+      
+    return null;
   },
 
   // Analyze uploaded files against a Job Description
   async analyzeResumes(
     job: JobDescription,
-    files: { filename: string; text: string }[],
+    files: { filename: string; text: string; file?: File }[],
     weights?: ScoringWeights
   ): Promise<AnalysisResponse> {
     const activeWeights = weights || getSavedWeights();
 
-    // Attempt Server API first
+    // Attempt Server API first. Real uploaded files are sent as multipart
+    // so the backend can parse the ORIGINAL PDF/DOCX bytes. This prevents
+    // browser PDF worker failures from silently removing candidates.
     try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          job_title: job.title,
-          job_description: job.description,
-          required_experience: job.required_experience,
-          required_education: job.required_education,
-          required_skills: job.required_skills,
-          weights: activeWeights,
-          resumes: files,
-        }),
-      });
+      const hasRealFiles = files.some((item) => item.file instanceof File);
+      let res: Response;
+
+      if (hasRealFiles) {
+        const form = new FormData();
+        form.append('job_title', job.title);
+        form.append('job_description', job.description);
+        form.append('required_experience', String(job.required_experience));
+        form.append('required_education', job.required_education);
+        form.append('required_skills', JSON.stringify(job.required_skills));
+        form.append('weights', JSON.stringify(activeWeights));
+
+        for (const item of files) {
+          if (item.file) {
+            form.append('resumes', item.file, item.filename);
+          }
+        }
+
+        res = await fetch('/api/analyze', {
+          method: 'POST',
+          body: form,
+        });
+      } else {
+        res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_title: job.title,
+            job_description: job.description,
+            required_experience: job.required_experience,
+            required_education: job.required_education,
+            required_skills: job.required_skills,
+            weights: activeWeights,
+            resumes: files.map(({ filename, text }) => ({ filename, text })),
+          }),
+        });
+      }
 
       if (res.ok) {
         const data: AnalysisResponse = await res.json();

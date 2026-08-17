@@ -1,19 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Search, 
-  Filter, 
-  ArrowUpDown, 
-  FileSpreadsheet, 
-  CheckCircle2, 
-  XCircle, 
-  Eye, 
-  Sparkles, 
-  Award,
+import {
+  Search,
+  ArrowUpDown,
+  FileSpreadsheet,
+  CheckCircle2,
   ChevronRight,
-  SlidersHorizontal,
   X,
-  Scale
+  Scale,
 } from 'lucide-react';
 import { Candidate, JobDescription, RecommendationTier } from '../types';
 import { api } from '../services/api';
@@ -42,44 +36,82 @@ export const Candidates: React.FC<CandidatesProps> = ({
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
   const [showCompareModal, setShowCompareModal] = useState(false);
 
+  // Runtime API responses can occasionally omit fields. Keep this page
+  // defensive so one incomplete candidate cannot crash the whole table.
+  const getCandidateName = (candidate: Candidate) =>
+    candidate.candidate_name?.trim() || 'Unknown Candidate';
+
+  const getCandidateEmail = (candidate: Candidate) =>
+    candidate.email?.trim() || 'Email not detected';
+
+  const getCandidateId = (candidate: Candidate) =>
+    candidate.candidate_id ||
+    `${candidate.resume_filename || getCandidateName(candidate)}-${candidate.email || 'candidate'}`;
+
+  const getMatchedSkills = (candidate: Candidate): string[] =>
+    Array.isArray(candidate.matched_skills) ? candidate.matched_skills : [];
+
+  const getMissingSkills = (candidate: Candidate): string[] =>
+    Array.isArray(candidate.missing_skills) ? candidate.missing_skills : [];
+
+  const getAdditionalSkills = (candidate: Candidate): string[] =>
+    Array.isArray(candidate.additional_skills) ? candidate.additional_skills : [];
+
+  const getExperienceYears = (candidate: Candidate) =>
+    Number(candidate.experience?.years) || 0;
+
+  const getRequiredExperienceYears = (candidate: Candidate) =>
+    Number(candidate.experience?.required_years) || 0;
+
+  const getEducationDegree = (candidate: Candidate) =>
+    candidate.education?.degree?.trim() || 'Not detected';
+
+  const getStrengths = (candidate: Candidate): string[] =>
+    Array.isArray(candidate.strengths) ? candidate.strengths : [];
+
   // Filter & Search Logic
   const filteredCandidates = useMemo(() => {
-    return candidates.filter((c) => {
-      // Search match
-      const query = searchQuery.toLowerCase().trim();
-      const matchesSearch =
-        !query ||
-        c.candidate_name.toLowerCase().includes(query) ||
-        c.email.toLowerCase().includes(query) ||
-        c.matched_skills.some(s => s.toLowerCase().includes(query)) ||
-        c.additional_skills.some(s => s.toLowerCase().includes(query));
+    return candidates
+      .filter(Boolean)
+      .filter((c) => {
+        const query = searchQuery.toLowerCase().trim();
+        const name = getCandidateName(c);
+        const email = getCandidateEmail(c);
+        const matchedSkills = getMatchedSkills(c);
+        const additionalSkills = getAdditionalSkills(c);
 
-      // Tier match
-      let matchesTier = true;
-      if (selectedTier !== 'ALL') {
-        matchesTier = c.recommendation === selectedTier;
-      }
+        const matchesSearch =
+          !query ||
+          name.toLowerCase().includes(query) ||
+          email.toLowerCase().includes(query) ||
+          matchedSkills.some((s) => s.toLowerCase().includes(query)) ||
+          additionalSkills.some((s) => s.toLowerCase().includes(query));
 
-      // Experience match
-      let matchesExp = true;
-      if (selectedExp !== 'ALL') {
-        matchesExp = c.experience.years >= Number(selectedExp);
-      }
+        let matchesTier = true;
+        if (selectedTier !== 'ALL') {
+          matchesTier = c.recommendation === selectedTier;
+        }
 
-      return matchesSearch && matchesTier && matchesExp;
-    }).sort((a, b) => {
-      let comparison = 0;
-      if (sortBy === 'rank') {
-        comparison = b.match_score - a.match_score;
-      } else if (sortBy === 'score') {
-        comparison = b.match_score - a.match_score;
-      } else if (sortBy === 'name') {
-        comparison = a.candidate_name.localeCompare(b.candidate_name);
-      } else if (sortBy === 'experience') {
-        comparison = b.experience.years - a.experience.years;
-      }
-      return sortOrder === 'asc' ? comparison : -comparison;
-    });
+        let matchesExp = true;
+        if (selectedExp !== 'ALL') {
+          matchesExp = getExperienceYears(c) >= Number(selectedExp);
+        }
+
+        return matchesSearch && matchesTier && matchesExp;
+      })
+      .sort((a, b) => {
+        let comparison = 0;
+
+        if (sortBy === 'rank' || sortBy === 'score') {
+          comparison = (Number(b.match_score) || 0) - (Number(a.match_score) || 0);
+        } else if (sortBy === 'name') {
+          comparison = getCandidateName(a).localeCompare(getCandidateName(b));
+        } else if (sortBy === 'experience') {
+          comparison = getExperienceYears(b) - getExperienceYears(a);
+        }
+
+        return sortOrder === 'asc' ? comparison : -comparison;
+      });
   }, [candidates, searchQuery, selectedTier, selectedExp, sortBy, sortOrder]);
 
   const handleExport = () => {
@@ -121,7 +153,9 @@ export const Candidates: React.FC<CandidatesProps> = ({
     }
   };
 
-  const comparedCandidateObjects = candidates.filter(c => selectedForCompare.includes(c.candidate_id));
+  const comparedCandidateObjects = candidates.filter(
+    (c) => c && selectedForCompare.includes(getCandidateId(c))
+  );
 
   return (
     <div className="space-y-6">
@@ -280,10 +314,18 @@ export const Candidates: React.FC<CandidatesProps> = ({
                 </tr>
               ) : (
                 filteredCandidates.map((cand, index) => {
-                  const isSelected = selectedForCompare.includes(cand.candidate_id);
+                  const candidateId = getCandidateId(cand);
+                  const candidateName = getCandidateName(cand);
+                  const candidateEmail = getCandidateEmail(cand);
+                  const matchedSkills = getMatchedSkills(cand);
+                  const missingSkills = getMissingSkills(cand);
+                  const experienceYears = getExperienceYears(cand);
+                  const requiredExperienceYears = getRequiredExperienceYears(cand);
+                  const isSelected = selectedForCompare.includes(candidateId);
+
                   return (
                     <tr 
-                      key={cand.candidate_id} 
+                      key={candidateId} 
                       className={`hover:bg-zinc-900/60 transition-colors ${
                         isSelected ? 'bg-[#C5A059]/10' : ''
                       }`}
@@ -293,7 +335,7 @@ export const Candidates: React.FC<CandidatesProps> = ({
                         <input
                           type="checkbox"
                           checked={isSelected}
-                          onChange={() => toggleCompare(cand.candidate_id)}
+                          onChange={() => toggleCompare(candidateId)}
                           className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-[#C5A059] focus:ring-[#C5A059]"
                         />
                       </td>
@@ -312,11 +354,13 @@ export const Candidates: React.FC<CandidatesProps> = ({
 
                       {/* Candidate Name & Info */}
                       <td className="px-4 py-3.5">
-                        <div className="font-bold text-zinc-200 hover:text-[#E5C07B] cursor-pointer" onClick={() => navigate(`/candidates/${cand.candidate_id}`)}>
-                          {cand.candidate_name}
+                        <div className="font-bold text-zinc-200 hover:text-[#E5C07B] cursor-pointer" onClick={() => navigate(`/candidates/${candidateId}`)}>
+                          {candidateName}
                         </div>
-                        <div className="text-[11px] text-zinc-500 truncate max-w-[170px]">{cand.email}</div>
-                        <div className="text-[10px] text-zinc-500">{cand.education.degree}</div>
+                        <div className="text-[11px] text-zinc-500 truncate max-w-[170px]">{candidateEmail}</div>
+                        <div className="text-[10px] text-zinc-500">
+                          {getEducationDegree(cand)}
+                        </div>
                       </td>
 
                       {/* Match Score */}
@@ -326,7 +370,7 @@ export const Candidates: React.FC<CandidatesProps> = ({
                             {cand.match_score}%
                           </span>
                           <span className="text-[10px] text-zinc-500 mt-0.5">
-                            {cand.score_breakdown.skills + cand.score_breakdown.semantic_similarity} pts core
+                            {(Number(cand.score_breakdown?.skills) || 0) + (Number(cand.score_breakdown?.semantic_similarity) || 0)} pts core
                           </span>
                         </div>
                       </td>
@@ -334,13 +378,13 @@ export const Candidates: React.FC<CandidatesProps> = ({
                       {/* Matched Skills */}
                       <td className="px-4 py-3.5">
                         <div className="flex flex-wrap gap-1 max-w-[220px]">
-                          {cand.matched_skills.slice(0, 4).map((s) => (
+                          {matchedSkills.slice(0, 4).map((s) => (
                             <span key={s} className="rounded bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300 border border-emerald-800/60">
                               {s}
                             </span>
                           ))}
-                          {cand.matched_skills.length > 4 && (
-                            <span className="text-[10px] text-zinc-500">+{cand.matched_skills.length - 4}</span>
+                          {matchedSkills.length > 4 && (
+                            <span className="text-[10px] text-zinc-500">+{matchedSkills.length - 4}</span>
                           )}
                         </div>
                       </td>
@@ -348,32 +392,32 @@ export const Candidates: React.FC<CandidatesProps> = ({
                       {/* Missing Skills */}
                       <td className="px-4 py-3.5">
                         <div className="flex flex-wrap gap-1 max-w-[170px]">
-                          {cand.missing_skills.length === 0 ? (
+                          {missingSkills.length === 0 ? (
                             <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               <span>100% Match</span>
                             </span>
                           ) : (
-                            cand.missing_skills.slice(0, 2).map((s) => (
+                            missingSkills.slice(0, 2).map((s) => (
                               <span key={s} className="rounded bg-rose-950/40 px-1.5 py-0.5 text-[10px] font-medium text-rose-300 border border-rose-800/60">
                                 {s}
                               </span>
                             ))
                           )}
-                          {cand.missing_skills.length > 2 && (
-                            <span className="text-[10px] text-rose-400">+{cand.missing_skills.length - 2}</span>
+                          {missingSkills.length > 2 && (
+                            <span className="text-[10px] text-rose-400">+{missingSkills.length - 2}</span>
                           )}
                         </div>
                       </td>
 
                       {/* Experience */}
                       <td className="px-4 py-3.5">
-                        <div className="font-semibold text-zinc-200">{cand.experience.years} yrs</div>
+                        <div className="font-semibold text-zinc-200">{experienceYears} yrs</div>
                         <div className="text-[10px]">
-                          {cand.experience.meets_requirement ? (
+                          {cand.experience?.meets_requirement ? (
                             <span className="text-emerald-400 font-medium">Meets req</span>
                           ) : (
-                            <span className="text-amber-400 font-medium">&lt; req ({cand.experience.required_years}y)</span>
+                            <span className="text-amber-400 font-medium">&lt; req ({requiredExperienceYears}y)</span>
                           )}
                         </div>
                       </td>
@@ -389,7 +433,7 @@ export const Candidates: React.FC<CandidatesProps> = ({
                       <td className="px-4 py-3.5">
                         <select
                           value={cand.status || 'Screened'}
-                          onChange={(e) => onUpdateCandidateStatus(cand.candidate_id, e.target.value as any)}
+                          onChange={(e) => onUpdateCandidateStatus(candidateId, e.target.value as Candidate['status'])}
                           className="rounded border border-zinc-800 bg-[#0C0C0C] px-2 py-1 text-[11px] font-medium text-zinc-300 focus:border-[#C5A059] focus:outline-hidden"
                         >
                           <option value="Screened">Screened</option>
@@ -402,7 +446,7 @@ export const Candidates: React.FC<CandidatesProps> = ({
                       {/* Action */}
                       <td className="px-4 py-3.5 text-right">
                         <button
-                          onClick={() => navigate(`/candidates/${cand.candidate_id}`)}
+                          onClick={() => navigate(`/candidates/${candidateId}`)}
                           className="inline-flex items-center gap-1 rounded-lg bg-[#C5A059]/15 px-2.5 py-1.5 text-xs font-semibold text-[#E5C07B] border border-[#C5A059]/30 hover:bg-[#C5A059]/25 transition-colors cursor-pointer"
                         >
                           <span>View</span>
@@ -437,12 +481,12 @@ export const Candidates: React.FC<CandidatesProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {comparedCandidateObjects.map(c => (
-                <div key={c.candidate_id} className="rounded-xl border border-zinc-800 bg-[#0C0C0C] p-4 space-y-4">
+                <div key={getCandidateId(c)} className="rounded-xl border border-zinc-800 bg-[#0C0C0C] p-4 space-y-4">
                   <div className="text-center pb-3 border-b border-zinc-800">
                     <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-[#C5A059]/20 text-[#E5C07B] border border-[#C5A059]/40 mb-1">
-                      Rank #{filteredCandidates.findIndex(candidate => candidate.candidate_id === c.candidate_id) + 1}
+                      Rank #{filteredCandidates.findIndex(candidate => getCandidateId(candidate) === getCandidateId(c)) + 1}
                     </span>
-                    <h3 className="font-bold text-base text-zinc-100">{c.candidate_name}</h3>
+                    <h3 className="font-bold text-base text-zinc-100">{getCandidateName(c)}</h3>
                     <div className={`mt-2 text-2xl font-extrabold ${c.match_score >= 80 ? 'text-emerald-400' : 'text-zinc-200'}`}>
                       {c.match_score}%
                     </div>
@@ -454,18 +498,18 @@ export const Candidates: React.FC<CandidatesProps> = ({
                   <div className="space-y-3 text-xs">
                     <div>
                       <strong className="block text-zinc-500 uppercase text-[10px]">Experience</strong>
-                      <span className="font-bold text-zinc-200">{c.experience.years} years</span> ({c.experience.meets_requirement ? 'Meets req' : 'Below req'})
+                      <span className="font-bold text-zinc-200">{getExperienceYears(c)} years</span> ({c.experience?.meets_requirement ? 'Meets req' : 'Below req'})
                     </div>
 
                     <div>
                       <strong className="block text-zinc-500 uppercase text-[10px]">Education</strong>
-                      <span className="text-zinc-300">{c.education.degree}</span>
+                      <span className="text-zinc-300">{getEducationDegree(c)}</span>
                     </div>
 
                     <div>
-                      <strong className="block text-zinc-500 uppercase text-[10px] mb-1">Matched Skills ({c.matched_skills.length})</strong>
+                      <strong className="block text-zinc-500 uppercase text-[10px] mb-1">Matched Skills ({getMatchedSkills(c).length})</strong>
                       <div className="flex flex-wrap gap-1">
-                        {c.matched_skills.map(s => (
+                        {getMatchedSkills(c).map(s => (
                           <span key={s} className="bg-emerald-950/40 text-emerald-300 border border-emerald-800/50 text-[10px] px-1.5 py-0.5 rounded">
                             {s}
                           </span>
@@ -474,12 +518,12 @@ export const Candidates: React.FC<CandidatesProps> = ({
                     </div>
 
                     <div>
-                      <strong className="block text-zinc-500 uppercase text-[10px] mb-1">Missing Skills ({c.missing_skills.length})</strong>
+                      <strong className="block text-zinc-500 uppercase text-[10px] mb-1">Missing Skills ({getMissingSkills(c).length})</strong>
                       <div className="flex flex-wrap gap-1">
-                        {c.missing_skills.length === 0 ? (
+                        {getMissingSkills(c).length === 0 ? (
                           <span className="text-emerald-400 font-medium">None</span>
                         ) : (
-                          c.missing_skills.map(s => (
+                          getMissingSkills(c).map(s => (
                             <span key={s} className="bg-rose-950/40 text-rose-300 border border-rose-800/50 text-[10px] px-1.5 py-0.5 rounded">
                               {s}
                             </span>
@@ -490,14 +534,14 @@ export const Candidates: React.FC<CandidatesProps> = ({
 
                     <div>
                       <strong className="block text-zinc-500 uppercase text-[10px]">Key Strength</strong>
-                      <p className="text-zinc-300 text-[11px] mt-0.5">{c.strengths[0] || 'Solid domain foundation'}</p>
+                      <p className="text-zinc-300 text-[11px] mt-0.5">{getStrengths(c)[0] || 'Solid domain foundation'}</p>
                     </div>
                   </div>
 
                   <button
                     onClick={() => {
                       setShowCompareModal(false);
-                      navigate(`/candidates/${c.candidate_id}`);
+                      navigate(`/candidates/${getCandidateId(c)}`);
                     }}
                     className="w-full rounded-lg bg-[#C5A059] py-2 text-xs font-bold text-zinc-950 hover:bg-[#D4AF37] transition-colors cursor-pointer"
                   >

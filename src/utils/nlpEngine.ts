@@ -85,39 +85,317 @@ export function calculateSemanticSimilarity(text1: string, text2: string): numbe
 
 // Resume Field Extraction Utilities
 export function extractCandidateName(text: string, filename?: string): string {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  
-  // Check first few lines for typical candidate name (2-4 words, capitalized, not starting with Resume/CV)
-  for (let i = 0; i < Math.min(lines.length, 6); i++) {
-    const line = lines[i];
-    if (/^(resume|curriculum|vitae|profile|summary|contact|phone|email|education)/i.test(line)) continue;
-    if (line.includes('@') || line.includes('http') || line.length > 45) continue;
-    
-    // Looks like a name: "Jane Doe", "Alex R. Johnson", "Dr. Sarah Chen"
-    if (/^[A-Z][a-zA-Z.'-]{1,20}(?:\s+[A-Z][a-zA-Z.'-]{1,20}){1,3}$/.test(line)) {
-      return line;
+  if (!text || !text.trim()) {
+    return 'Candidate';
+  }
+
+  // ---------------------------------------------------------
+  // Normalize extracted resume text
+  // ---------------------------------------------------------
+  const normalizedText = text
+    .replace(/\r/g, '\n')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // ---------------------------------------------------------
+  // Validate whether a string looks like a real person's name
+  // ---------------------------------------------------------
+  const isValidName = (value: string): boolean => {
+    let name = value
+      .replace(
+        /^(full\s+name|candidate\s+name|name)\s*[:\-]\s*/i,
+        ''
+      )
+      .trim();
+
+    name = name
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!name || name.length < 3 || name.length > 60) {
+      return false;
+    }
+
+    // Names normally contain 2–5 words
+    const words = name.split(' ');
+
+    if (words.length < 2 || words.length > 5) {
+      return false;
+    }
+
+    // Never accept email / URL
+    if (
+      name.includes('@') ||
+      /https?:\/\//i.test(name) ||
+      /www\./i.test(name)
+    ) {
+      return false;
+    }
+
+    // Never accept anything containing numbers
+    if (/\d/.test(name)) {
+      return false;
+    }
+
+    // Every word should look like a person's name
+    if (
+      !words.every(word =>
+        /^[A-Za-z][A-Za-z.'’-]*$/.test(word)
+      )
+    ) {
+      return false;
+    }
+
+    const lower = name.toLowerCase();
+
+    // -------------------------------------------------------
+    // Resume headings / technical terms that are NOT names
+    // -------------------------------------------------------
+    const excludedPhrases = [
+      'resume',
+      'curriculum vitae',
+      'professional resume',
+      'profile',
+      'career profile',
+      'professional profile',
+      'about me',
+      'contact',
+      'contact information',
+      'personal information',
+      'objective',
+      'career objective',
+      'summary',
+      'professional summary',
+      'experience',
+      'work experience',
+      'education',
+      'skills',
+      'technical skills',
+      'skills summary',
+      'projects',
+      'certifications',
+      'achievements',
+      'references',
+
+      // Technical / job related phrases
+      'machine learning',
+      'deep learning',
+      'data science',
+      'computer science',
+      'artificial intelligence',
+      'software engineering',
+      'software development',
+      'web development',
+      'frontend developer',
+      'backend developer',
+      'full stack developer',
+      'full-stack developer',
+      'software developer',
+      'data scientist',
+      'machine learning engineer',
+      'ai engineer',
+      'ml engineer',
+    ];
+
+    if (excludedPhrases.includes(lower)) {
+      return false;
+    }
+
+    // -------------------------------------------------------
+    // Individual words that strongly indicate a job title
+    // -------------------------------------------------------
+    const titleWords = new Set([
+      'engineer',
+      'developer',
+      'designer',
+      'manager',
+      'student',
+      'intern',
+      'analyst',
+      'scientist',
+      'consultant',
+      'architect',
+      'administrator',
+      'recruiter',
+      'director',
+      'professor',
+      'specialist',
+      'developer',
+      'programmer',
+      'technician',
+      'lead',
+      'internship',
+    ]);
+
+    if (
+      words.some(word =>
+        titleWords.has(word.toLowerCase())
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  };
+
+  // ---------------------------------------------------------
+  // 1. Explicit name labels
+  // ---------------------------------------------------------
+  const labelPatterns = [
+    /(?:full\s+name|candidate\s+name|name)\s*[:\-]\s*([A-Za-z][A-Za-z.'’-]*(?:\s+[A-Za-z][A-Za-z.'’-]*){1,4})/i,
+  ];
+
+  for (const pattern of labelPatterns) {
+    const match = normalizedText.match(pattern);
+
+    if (match && isValidName(match[1])) {
+      return match[1].trim();
     }
   }
 
-  // Fallback: extract from filename (e.g., "John_Doe_Resume.pdf" -> "John Doe")
+  // ---------------------------------------------------------
+  // 2. Search first part of resume for an actual name
+  // ---------------------------------------------------------
+  const firstPart = text
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 20);
+
+  for (const line of firstPart) {
+    let candidate = line
+      .replace(
+        /[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}/gi,
+        ' '
+      )
+      .replace(
+        /(?:\+?\d[\d\s().-]{7,}\d)/g,
+        ' '
+      )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (isValidName(candidate)) {
+      return candidate;
+    }
+  }
+
+  // ---------------------------------------------------------
+  // 3. Try extracting a name from the email address
+  // ---------------------------------------------------------
+  const emailMatch = text.match(
+    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}/
+  );
+
+  if (emailMatch) {
+    const email = emailMatch[0]
+      .split('@')[0]
+      .toLowerCase();
+
+    // Remove common numeric suffixes / years / IDs
+    const withoutNumbers = email
+      .replace(/\d+/g, '')
+      .replace(/[^a-z._-]/g, '');
+
+    const parts = withoutNumbers
+      .split(/[._-]+/)
+      .filter(Boolean);
+
+    // -------------------------------------------------------
+    // Example:
+    // shreya.singh2151@gmail.com
+    // -> Shreya Singh
+    // -------------------------------------------------------
+    if (parts.length >= 2) {
+      const possibleName = parts
+        .slice(0, 3)
+        .map(
+          part =>
+            part.charAt(0).toUpperCase() +
+            part.slice(1)
+        )
+        .join(' ');
+
+      if (isValidName(possibleName)) {
+        return possibleName;
+      }
+    }
+
+    // -------------------------------------------------------
+    // Example:
+    // shreyasrivastava020806@gmail.com
+    // -> Shreya Srivastava
+    //
+    // Common Indian name patterns are handled here.
+    // -------------------------------------------------------
+    const compact = withoutNumbers;
+
+    const commonFirstNames = [
+      'shreya',
+      'priya',
+      'pooja',
+      'neha',
+      'riya',
+      'ananya',
+      'arjun',
+      'rahul',
+      'rohit',
+      'sumit',
+      'sudeep',
+      'shubham',
+      'aman',
+      'aditya',
+      'ayush',
+      'nikhil',
+      'simran',
+      'sakshi',
+      'muskan',
+      'kavya',
+    ];
+
+    for (const firstName of commonFirstNames) {
+      if (compact.startsWith(firstName) && compact.length > firstName.length + 2) {
+        const lastName = compact.slice(firstName.length);
+
+        const possibleName =
+          firstName.charAt(0).toUpperCase() +
+          firstName.slice(1) +
+          ' ' +
+          lastName.charAt(0).toUpperCase() +
+          lastName.slice(1);
+
+        if (isValidName(possibleName)) {
+          return possibleName;
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------
+  // 4. Filename fallback
+  // ---------------------------------------------------------
   if (filename) {
-    const cleanName = filename
+    const cleanFilename = filename
       .replace(/\.(pdf|docx|txt)$/i, '')
       .replace(/[_-]/g, ' ')
-      .replace(/\b(resume|cv|profile|v\d+|\d+)\b/gi, '')
+      .replace(
+        /\b(resume|cv|profile|candidate|document|final|copy|v\d+|\d+)\b/gi,
+        ' '
+      )
+      .replace(/\s+/g, ' ')
       .trim();
-    if (cleanName.length > 2) {
-      return cleanName
-        .split(' ')
-        .filter(w => w.length > 0)
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-        .join(' ');
+
+    if (isValidName(cleanFilename)) {
+      return cleanFilename;
     }
   }
 
+  // ---------------------------------------------------------
+  // 5. Final fallback
+  // ---------------------------------------------------------
   return 'Candidate';
 }
-
 export function extractEmail(text: string): string {
   const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
   return match ? match[0].toLowerCase() : '';

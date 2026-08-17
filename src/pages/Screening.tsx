@@ -16,7 +16,7 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { JobDescription } from '../types';
-import { api, extractTextFromFile } from '../services/api';
+import { api } from '../services/api';
 import { SAMPLE_JOBS, SAMPLE_RESUME_TEXTS } from '../data/mockData';
 
 interface ScreeningProps {
@@ -102,28 +102,27 @@ export const Screening: React.FC<ScreeningProps> = ({
         continue;
       }
 
-      try {
-        const text = await extractTextFromFile(f);
-        validFiles.push({
-          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          file: f,
-          name: f.name,
-          size: f.size,
-          type: ext.toUpperCase(),
-          text,
-          status: 'ready',
-        });
-      } catch (err) {
-        validFiles.push({
-          id: `file_${Date.now()}_${i}`,
-          file: f,
-          name: f.name,
-          size: f.size,
-          type: ext?.toUpperCase() || 'UNKNOWN',
-          status: 'error',
-          errorMsg: 'Could not extract text from document',
-        });
+      // Do not parse PDF/DOCX in the browser. The backend receives the
+      // original file bytes and performs the authoritative extraction.
+      // This removes the fragile pdf.js worker/CDN dependency entirely.
+      let previewText = '';
+      if (ext === 'txt') {
+        try {
+          previewText = await f.text();
+        } catch {
+          previewText = '';
+        }
       }
+
+      validFiles.push({
+        id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        file: f,
+        name: f.name,
+        size: f.size,
+        type: ext.toUpperCase(),
+        text: previewText,
+        status: 'ready',
+      });
     }
 
     setUploadedFiles(prev => [...prev, ...validFiles]);
@@ -152,23 +151,30 @@ export const Screening: React.FC<ScreeningProps> = ({
   const handleAnalyze = async () => {
     setErrorMessage(null);
 
-    // Form Validations
     if (!jobTitle.trim()) {
       setErrorMessage('Please specify a Job Title.');
       return;
     }
+
     if (!jobDescription.trim() || jobDescription.trim().length < 20) {
       setErrorMessage('Please provide a complete Job Description (at least 20 characters).');
       return;
     }
+
     if (uploadedFiles.length === 0) {
       setErrorMessage('Please upload or load at least one candidate resume.');
       return;
     }
 
-    const readyFiles = uploadedFiles.filter(f => f.text && f.status === 'ready');
-    if (readyFiles.length === 0) {
-      setErrorMessage('No valid resume text detected to analyze. Please check uploaded files.');
+    // Keep EVERY uploaded file. Do not drop files just because browser-side
+    // PDF extraction failed. The actual file is now sent to the backend,
+    // where PyMuPDF/pypdf can parse it reliably.
+    const analyzableFiles = uploadedFiles.filter((f) => f.file || f.text);
+
+    if (analyzableFiles.length === 0) {
+      setErrorMessage(
+        'No usable resumes found. Please upload at least one PDF, DOCX, or TXT file.'
+      );
       return;
     }
 
@@ -189,39 +195,41 @@ export const Screening: React.FC<ScreeningProps> = ({
     onJobUpdate(activeJob);
 
     try {
-      // Step 2: NLP extraction
-      setTimeout(() => {
-        setAnalysisProgress(45);
-        setAnalysisStep('Extracting candidate skills, experience, and educational background...');
-      }, 500);
+      setAnalysisProgress(35);
+      setAnalysisStep('Extracting candidate skills, experience, and educational background...');
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // Step 3: Semantic TF-IDF Matrix
-      setTimeout(() => {
-        setAnalysisProgress(75);
-        setAnalysisStep('Calculating cosine semantic similarity and scoring candidate matches...');
-      }, 1000);
+      setAnalysisProgress(65);
+      setAnalysisStep('Calculating cosine semantic similarity and scoring candidate matches...');
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // Perform actual analysis
-      const filesPayload = readyFiles.map(f => ({
+      const filesPayload = analyzableFiles.map((f) => ({
         filename: f.name,
-        text: f.text!,
+        text: f.text || '',
+        file: f.file,
       }));
 
-      setTimeout(async () => {
-        await api.analyzeResumes(activeJob, filesPayload);
-        setAnalysisProgress(100);
-        setAnalysisStep('Ranking candidates & generating explainable match breakdowns...');
-        
-        setTimeout(() => {
-          setIsAnalyzing(false);
-          onAnalysisComplete();
-          navigate('/candidates');
-        }, 600);
-      }, 1500);
+      const result = await api.analyzeResumes(activeJob, filesPayload);
 
-    } catch (err: any) {
+      setAnalysisProgress(100);
+      setAnalysisStep(
+        `Ranked ${result.candidates.length} candidates & generated explainable match breakdowns.`
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
       setIsAnalyzing(false);
-      setErrorMessage(err?.message || 'Failed to analyze candidate resumes. Please try again.');
+      onAnalysisComplete();
+      navigate('/candidates');
+    } catch (err: any) {
+      console.error('[Screening] Analysis failed:', err);
+      setIsAnalyzing(false);
+      setAnalysisProgress(0);
+      setAnalysisStep('');
+      setErrorMessage(
+        err?.message ||
+          'Failed to analyze candidate resumes. Please try again.'
+      );
     }
   };
 
