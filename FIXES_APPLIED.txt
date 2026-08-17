@@ -1,0 +1,24 @@
+Recruitly AI - Resume Pipeline Fixes
+
+1. Original PDF/DOCX files are now sent from the browser to Express as multipart uploads.
+2. Express forwards the ORIGINAL file bytes to FastAPI; PDF bytes are never decoded as UTF-8.
+3. FastAPI parses PDF/DOCX files server-side with PyMuPDF/pypdf/python-docx.
+4. Browser-side PDF.js extraction is no longer required for uploaded files, removing the broken CDN worker issue.
+5. Uploaded files are no longer discarded when browser extraction fails.
+6. FastAPI preserves one candidate row per submitted resume, including a visible fallback row if processing fails. Duplicate names/emails are NOT used to deduplicate candidates.
+7. Candidate experience no longer defaults to 2.5 years; it is extracted from explicit experience text/date ranges, otherwise 0.
+8. Education now returns the detected degree/institution and correctly evaluates the required education level.
+9. Candidate names retain proper spaces and the email fallback handles concatenated names such as shreyasrivastava.
+
+After replacing the project files, run:
+
+Frontend/Express:
+  npm install
+  npm run dev
+
+FastAPI (separate terminal):
+  cd backend
+  pip install -r requirements.txt
+  uvicorn app.main:app --reload
+
+Then upload the same 29 resumes. The UI should report 29 ranked candidates unless a file was rejected by the upload limit/unsupported-extension validation.
