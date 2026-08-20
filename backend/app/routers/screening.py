@@ -64,7 +64,7 @@ def get_resume_text(filename: str, contents: bytes) -> str:
         # Fallback to PyPDF2 for PDFs that the primary parser
         # cannot decode.
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
             import io
 
             reader = PdfReader(io.BytesIO(contents))
