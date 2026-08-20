@@ -161,17 +161,6 @@ async function startServer() {
         return res.status(400).json({ error: 'No resumes received' });
       }
 
-      // Wake the Render FastAPI backend before sending the real analysis request.
-      const fastAPIReady = await waitForFastAPI();
-
-      if (!fastAPIReady) {
-        return res.status(503).json({
-          error:
-            'FastAPI backend is waking up. Please wait a few seconds and try again.',
-          python_backend: PYTHON_API_URL,
-        });
-      }
-
       let pythonResponse: Response;
 
       if (uploadedFiles.length > 0) {
@@ -187,9 +176,19 @@ async function startServer() {
         for (const file of uploadedFiles) {
           form.append(
             'resumes',
-            new Blob([file.buffer], { type: file.mimetype || 'application/octet-stream' }),
+            new Blob(
+              [
+                file.buffer.buffer.slice(
+                  file.buffer.byteOffset,
+                  file.buffer.byteOffset + file.buffer.byteLength
+                ) as ArrayBuffer,
+              ],
+              {
+                type: file.mimetype || 'application/octet-stream',
+              }
+            ),
             file.originalname
-          );
+        );
         }
 
         console.log(

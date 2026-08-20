@@ -47,7 +47,6 @@ export async function extractTextFromFile(file: File): Promise<string> {
         console.warn('PDF worker failed; retrying without worker:', workerError);
         pdf = await pdfjs.getDocument({
           data: arrayBuffer,
-          disableWorker: true,
         }).promise;
       }
 
